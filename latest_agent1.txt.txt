@@ -1,0 +1,313 @@
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
+from dotenv import load_dotenv
+import os
+import json
+from langgraph.graph import StateGraph, END
+from typing import TypedDict, List
+
+# Load environment variables from .env file
+load_dotenv()
+
+# Define the tools
+tools = [
+    {
+        "type": "function",
+        "function": {
+            "name": "calculate",
+            "description": "Perform basic arithmetic operations",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "number1": {
+                        "type": "number",
+                        "description": "The first number"
+                    },
+                    "number2": {
+                        "type": "number",
+                        "description": "The second number"
+                    },
+                    "operation": {
+                        "type": "string",
+                        "description": "The arithmetic operation to perform",
+                        "enum": ["add", "subtract", "multiply", "divide"]
+                    }
+                },
+                "required": ["number1", "number2", "operation"]
+            }
+        }
+    }
+]
+
+# Define the calculate function
+def calculate(arguments):
+    args = json.loads(arguments)  # Parse JSON string to dictionary
+    number1 = args["number1"]
+    number2 = args["number2"]
+    operation = args["operation"]
+    
+    if operation == "add":
+        return number1 + number2
+    elif operation == "subtract":
+        return number1 - number2
+    elif operation == "multiply":
+        return number1 * number2
+    elif operation == "divide":
+        if number2 == 0:
+            return "Error: Division by zero"
+        return number1 / number2
+    else:
+        return f"Error: Invalid operation: {operation}"
+
+# Define the state
+class GraphState(TypedDict):
+    messages: List[HumanMessage | AIMessage | ToolMessage]
+
+# Initialize ChatOpenAI with API key from .env and gpt-4o-mini model
+api_key = os.getenv("OPENAI_API_KEY")
+if not api_key:
+    raise ValueError("OPENAI_API_KEY not found in .env file")
+
+llm = ChatOpenAI(model="gpt-4o-mini", api_key=api_key).bind_tools(tools)
+
+# Define nodes
+def call_model(state: GraphState) -> GraphState:
+    """Invoke the model with the current messages."""
+    messages = state["messages"]
+    response = llm.invoke(messages)
+    return {"messages": messages + [response]}
+
+def call_tool(state: GraphState) -> GraphState:
+    """Execute tool calls if present."""
+    messages = state["messages"]
+    last_message = messages[-1]
+    
+    if not last_message.tool_calls:
+        return state
+    
+    results = []
+    for tool_call in last_message.tool_calls:
+        try:
+            if tool_call["name"] == "calculate":
+                result = calculate(json.dumps(tool_call["args"]))  # Pass JSON string to calculate
+            else:
+                result = f"Error: Unknown tool {tool_call['name']}"
+            results.append(ToolMessage(
+                content=str(result),
+                name=tool_call["name"],
+                tool_call_id=tool_call["id"]
+            ))
+        except Exception as e:
+            results.append(ToolMessage(
+                content=f"Error: {str(e)}",
+                name=tool_call["name"],
+                tool_call_id=tool_call["id"]
+            ))
+    
+    return {"messages": messages + results}
+
+# Define routing logic
+def route_tools(state: GraphState):
+    """Route to tool node if tool calls exist, else end."""
+    last_message = state["messages"][-1]
+    if isinstance(last_message, ToolMessage):
+        return END  # End workflow after tool execution
+    return "call_tool" if getattr(last_message, "tool_calls", []) else END
+
+# Build the graph
+workflow = StateGraph(GraphState)
+workflow.add_node("call_model", call_model)
+workflow.add_node("call_tool", call_tool)
+workflow.add_edge("call_model", "call_tool")
+workflow.add_conditional_edges("call_tool", route_tools, {"call_tool": "call_model", END: END})
+workflow.set_entry_point("call_model")
+
+# Compile the graph
+graph = workflow.compile()
+
+# Sample user query
+initial_state = {"messages": [HumanMessage(content="Calculate 523 plus 354, and 4 times 50")]}
+
+# Run the graph
+result = graph.invoke(initial_state)
+
+# Function to print response details
+def pprint_response(state: GraphState):
+    print("--- Final State ---\n")
+    for i, message in enumerate(state["messages"]):
+        if isinstance(message, HumanMessage):
+            print(f"--- Human Message {i+1} ---\n")
+            print(f"Content: {message.content}\n")
+        elif isinstance(message, AIMessage):
+            print(f"--- AI Message {i+1} ---\n")
+            print(f"Content: {message.content}\n")
+            if message.tool_calls:
+                for j, tool_call in enumerate(message.tool_calls):
+                    print(f"--- Tool Call {j+1} ---\n")
+                    print(f"Function: {tool_call['name']}\n")
+                    print(f"Arguments: {tool_call['args']}\n")
+        elif isinstance(message, ToolMessage):
+            print(f"--- Tool Result {i+1} ---\n")
+            print(f"Content: {message.content}\n")
+
+# Print the result
+pprint_response(result)
+
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
+from dotenv import load_dotenv
+import os
+import json
+from langgraph.graph import StateGraph, END
+from typing import TypedDict, List
+
+# Load environment variables from .env file
+load_dotenv()
+
+# Define the tools
+tools = [
+    {
+        "type": "function",
+        "function": {
+            "name": "calculate",
+            "description": "Perform basic arithmetic operations",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "number1": {
+                        "type": "number",
+                        "description": "The first number"
+                    },
+                    "number2": {
+                        "type": "number",
+                        "description": "The second number"
+                    },
+                    "operation": {
+                        "type": "string",
+                        "description": "The arithmetic operation to perform",
+                        "enum": ["add", "subtract", "multiply", "divide"]
+                    }
+                },
+                "required": ["number1", "number2", "operation"]
+            }
+        }
+    }
+]
+
+# Define the calculate function
+def calculate(arguments):
+    args = json.loads(arguments)  # Parse JSON string to dictionary
+    number1 = args["number1"]
+    number2 = args["number2"]
+    operation = args["operation"]
+    
+    if operation == "add":
+        return number1 + number2
+    elif operation == "subtract":
+        return number1 - number2
+    elif operation == "multiply":
+        return number1 * number2
+    elif operation == "divide":
+        if number2 == 0:
+            return "Error: Division by zero"
+        return number1 / number2
+    else:
+        return f"Error: Invalid operation: {operation}"
+
+# Define the state
+class GraphState(TypedDict):
+    messages: List[HumanMessage | AIMessage | ToolMessage]
+
+# Initialize ChatOpenAI with API key from .env and gpt-4o-mini model
+api_key = os.getenv("OPENAI_API_KEY")
+if not api_key:
+    raise ValueError("OPENAI_API_KEY not found in .env file")
+
+llm = ChatOpenAI(model="gpt-4o-mini", api_key=api_key).bind_tools(tools)
+
+# Define nodes
+def call_model(state: GraphState) -> GraphState:
+    """Invoke the model with the current messages."""
+    messages = state["messages"]
+    response = llm.invoke(messages)
+    return {"messages": messages + [response]}
+
+def call_tool(state: GraphState) -> GraphState:
+    """Execute tool calls if present."""
+    messages = state["messages"]
+    last_message = messages[-1]
+    
+    if not last_message.tool_calls:
+        return state
+    
+    results = []
+    for tool_call in last_message.tool_calls:
+        try:
+            if tool_call["name"] == "calculate":
+                result = calculate(json.dumps(tool_call["args"]))  # Pass JSON string to calculate
+            else:
+                result = f"Error: Unknown tool {tool_call['name']}"
+            results.append(ToolMessage(
+                content=str(result),
+                name=tool_call["name"],
+                tool_call_id=tool_call["id"]
+            ))
+        except Exception as e:
+            results.append(ToolMessage(
+                content=f"Error: {str(e)}",
+                name=tool_call["name"],
+                tool_call_id=tool_call["id"]
+            ))
+    
+    return {"messages": messages + results}
+
+# Define routing logic
+def route_tools(state: GraphState):
+    """Route to tool node if tool calls exist, else end."""
+    last_message = state["messages"][-1]
+    if isinstance(last_message, ToolMessage):
+        return END  # End workflow after tool execution
+    return "call_tool" if getattr(last_message, "tool_calls", []) else END
+
+# Build the graph
+workflow = StateGraph(GraphState)
+workflow.add_node("call_model", call_model)
+workflow.add_node("call_tool", call_tool)
+workflow.add_edge("call_model", "call_tool")
+workflow.add_conditional_edges("call_tool", route_tools, {"call_tool": "call_model", END: END})
+workflow.set_entry_point("call_model")
+
+# Compile the graph
+graph = workflow.compile()
+
+# Sample user query
+initial_state = {"messages": [HumanMessage(content="Calculate 523 plus 354, and 4 times 50")]}
+
+# Run the graph
+result = graph.invoke(initial_state)
+
+# Function to print response details
+def pprint_response(state: GraphState):
+    print("--- Final State ---\n")
+    for i, message in enumerate(state["messages"]):
+        if isinstance(message, HumanMessage):
+            print(f"--- Human Message {i+1} ---\n")
+            print(f"Content: {message.content}\n")
+        elif isinstance(message, AIMessage):
+            print(f"--- AI Message {i+1} ---\n")
+            print(f"Content: {message.content}\n")
+            if message.tool_calls:
+                for j, tool_call in enumerate(message.tool_calls):
+                    print(f"--- Tool Call {j+1} ---\n")
+                    print(f"Function: {tool_call['name']}\n")
+                    print(f"Arguments: {tool_call['args']}\n")
+        elif isinstance(message, ToolMessage):
+            print(f"--- Tool Result {i+1} ---\n")
+            print(f"Content: {message.content}\n")
+
+# Print the result
+pprint_response(result)
+
+
+from IPython.display import Image, display
+display(Image(graph.get_graph().draw_mermaid_png()))
